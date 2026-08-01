@@ -1,0 +1,24 @@
+{
+  "name": "uee-ai-member",
+  "version": "0.0.1",
+  "description": "An event-driven AI integration module for UnyEvents Core, enabling seamless interaction with LLMs via OpenAI-compatible APIs.",
+  "homepage": "https://github.com/ellementul/uee-ai-member#readme",
+  "bugs": {
+    "url": "https://github.com/ellementul/uee-ai-member/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ellementul/uee-ai-member.git"
+  },
+  "dependencies": {
+    "@ellementul/uee-core": "file:../uee-core"
+  },
+  "license": "MIT",
+  "author": "ellementul",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "ava",
+    "start": "node ./index.js"
+  }
+}
