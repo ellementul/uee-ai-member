@@ -12,7 +12,8 @@ export class ChatMember extends MemberFactory {
         
         this.subscribe(aiResponseEvent, (msg) => {
             if (msg.sourceUid === this.uid()) return
-            // this._prompt()
+            console.log(`\n[AI]: ${msg.message}`)
+            this._prompt()
         })
         
         this._startInput()
