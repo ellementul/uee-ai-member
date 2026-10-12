@@ -10,13 +10,11 @@ export class AIMember extends MemberFactory {
     
     this.onJoinRoom = () => {
       console.log(`[AIMember] Присоединился. UID: ${this.uid()}`)
-      this.subscribe(taskRequestEvent, this.handleTask.bind(this))
+      this.subscribe(taskRequestEvent, this.handleTask.bind(this), false)
     }
   }
   
   async handleTask(msg) {
-    if (msg.sourceUid === this.uid()) return
-    
     try {
       const response = await fetch(this.apiUrl, {
         method: 'POST',

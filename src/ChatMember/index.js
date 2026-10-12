@@ -24,20 +24,21 @@ export class ChatMember extends MemberFactory {
       })
       
       this.subscribe(aiResponseEvent, (msg) => {
-        if (msg.sourceUid === this.uid()) return
+        this._logEvent('ANSWER AI', 'RECEIVE', msg, true)
         this._prompt()
-      })
+      }, false)
       
       this._startInput()
     }
   }
 
-  _logEvent(direction, eventName, payload) {
+  _logEvent(direction, eventName, payload, isConsole = false) {
     const timestamp = new Date().toISOString()
     const logLine = `\n[${timestamp}] [${direction}] ${eventName}\n${JSON.stringify(payload, null, 2)}\n`
     
     // Вывод в консоль
-    console.log(logLine.trim())
+    if(isConsole)
+      console.log(logLine.trim())
     // Запись в файл
     this.logStream.write(logLine)
   }
