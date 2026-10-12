@@ -6,6 +6,8 @@ import { EventFactory, MemberFactory, Types } from '@ellementul/uee-core'
 export class ChatMember extends MemberFactory {
   constructor(name = "ChatMember") {
     super(name)
+
+    this.systemPrompt = " "
     
     // Уникальное имя файла для каждого запуска
     const logFileName = `chat_log_${new Date().toISOString().replace(/[:.]/g, '-')}.log`
@@ -61,6 +63,7 @@ export class ChatMember extends MemberFactory {
           const taskPayload = {
             taskId: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
             sourceUid: this.uid(),
+            systemPrompt: this.systemPrompt,
             content: content,
             timestamp: Date.now().toString(),
             role: "User"

@@ -1,5 +1,5 @@
 import { MemberFactory } from '@ellementul/uee-core'
-import { taskRequestEvent, aiResponseEvent } from './events.js'
+import { taskRequestEvent, aiResponseEvent, inferenceErrorEvent } from './events.js'
 
 export class AIMember extends MemberFactory {
   constructor(name = "AIMember") {
@@ -17,8 +17,6 @@ export class AIMember extends MemberFactory {
   async handleTask(msg) {
     if (msg.sourceUid === this.uid()) return
     
-    console.log(`[AI] Получена задача "${msg.taskId}": "${msg.content}" (Роль: ${msg.role})`)
-    
     try {
       const response = await fetch(this.apiUrl, {
         method: 'POST',
@@ -26,7 +24,7 @@ export class AIMember extends MemberFactory {
         body: JSON.stringify({
           model: this.model,
           messages: [
-            { role: 'system', content: 'Ты полезный ассистент. Отвечай кратко и по делу.' },
+            { role: 'system', content: msg.systemPrompt },
             { role: 'user', content: msg.content }
           ]
         })
@@ -42,10 +40,15 @@ export class AIMember extends MemberFactory {
         message: aiText,
         timestamp: Date.now().toString()
       })
-      
-      console.log(`[AI] Ответ отправлен.`)
     } catch (error) {
-      console.error(`[AI] Ошибка вызова LLM:`, error.message)
+      this.send(inferenceErrorEvent, {
+        sourceUid: this.uid(),
+        taskId: msg.taskId,
+        error: {
+          message: error.message
+        },
+        timestamp: Date.now().toString()
+      })
     }
   }
 }
