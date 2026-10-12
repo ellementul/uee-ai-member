@@ -35,10 +35,10 @@ The content is organized as follows:
 # Directory Structure
 ````
 src/
-  AIMember/
+  ChatMember/
     events.js
     index.js
-  ChatMember/
+  InferenceMember/
     events.js
     index.js
   Tools/
@@ -56,6 +56,96 @@ README.md
 ````
 
 # Files
+
+## File: src/InferenceMember/events.js
+````javascript
+import { EventFactory, Types } from "@ellementul/uee-core"
+
+export const taskRequestEvent = EventFactory(Types.Object.Def({
+  system: "AI",
+  action: "TaskRequest",
+  taskId: Types.Key.Def(3),
+  sourceUid: Types.Key.Def(3),
+  content: Types.String.Def(),
+  systemPrompt: Types.String.Def(),
+  timestamp: Types.Key.Def(3),
+  role: Types.String.Def()
+}))
+
+// AI ответил
+export const aiResponseEvent = EventFactory(Types.Object.Def({
+  system: "AI",
+  action: "Response",
+  sourceUid: Types.Key.Def(3),
+  message: Types.String.Def(),
+  timestamp: Types.Key.Def(3)
+}))
+
+export const inferenceErrorEvent = EventFactory(Types.Object.Def({
+  system: "AI",
+  action: "InferenceError",
+  sourceUid: Types.Key.Def(3),
+  taskId: Types.Key.Def(3),       // Критически важно: связывает ошибку с конкретной задачей
+  error: Types.Object.Def({
+    message: Types.String.Def()   // Только сообщение, как мы и договаривались
+  }),
+  timestamp: Types.Key.Def(3)
+}))
+````
+
+## File: src/InferenceMember/index.js
+````javascript
+import { MemberFactory } from '@ellementul/uee-core'
+import { taskRequestEvent, aiResponseEvent, inferenceErrorEvent } from './events.js'
+import { LlmTool } from '../Tools/lmstudio/index.js'
+
+export class InferenceMember extends MemberFactory { // <-- Переименован класс
+  constructor(name = "InferenceMember") {
+    super(name)
+    
+    // 1. Подключаем только инструмент LLM
+    this.addTool(LlmTool)
+    
+    this.tools.Llm.setConfig({
+      apiUrl: 'http://localhost:1234/v1/chat/completions',
+      model: 'omnicoder-qwen3.5-9b-claude-4.6-opus-uncensored-v2'
+    })
+    
+    this.onJoinRoom = () => {
+      this.subscribe(taskRequestEvent, this.handleTask.bind(this), false)
+    }
+  }
+  
+  async handleTask(msg) {
+    try {
+      // 2. Используем абстракцию инструмента
+      const result = await this.tools.Llm.query([
+        { role: 'system', content: msg.systemPrompt },
+        { role: 'user', content: msg.content }
+      ])
+      
+      // 3. Генерируем событие ответа (без console.log)
+      if (result && result.message) {
+        this.send(aiResponseEvent, {
+          sourceUid: this.uid(),
+          message: result.message,
+          timestamp: Date.now().toString()
+        })
+      }
+    } catch (error) {
+      // 4. Генерируем событие ошибки (без console.error)
+      this.send(inferenceErrorEvent, {
+        sourceUid: this.uid(),
+        taskId: msg.taskId,
+        error: {
+          message: error.message
+        },
+        timestamp: Date.now().toString()
+      })
+    }
+  }
+}
+````
 
 ## File: src/Tools/eventQueue/index.js
 ````javascript
@@ -299,7 +389,7 @@ vite.config.ts.timestamp-*
 ## File: index.js
 ````javascript
 import { MemberFactory } from '@ellementul/uee-core'
-import { AIMember } from './src/AIMember/index.js'
+import { InferenceMember } from './src/InferenceMember/index.js'
 import { ChatMember } from './src/ChatMember/index.js'
 
 console.log('--- Инициализация системы ---')
@@ -314,8 +404,8 @@ const userChat = new ChatMember("UserChat")
 console.log(`[UserChat] Запущен. UID: ${userChat.uid()}`)
 
 // 3. Создаем AI (пока работает как эхо-бот)
-const aiChat = new AIMember("AIMember")
-console.log(`[AIMember] Запучен. UID: ${aiChat.uid()}`)
+const aiChat = new InferenceMember("InferenceMember")
+console.log(`[InferenceMember] Запучен. UID: ${aiChat.uid()}`)
 
 // 4. ПОМЕЩАЕМ ОБОИХ В ОДНУ ОБЩУЮ КОМНАТУ
 // Это автоматически настроит всплытие событий (bubbling) между ними
@@ -329,7 +419,7 @@ host.addMember(userChat)
 
 console.log('\n=== Система готова к работе ===')
 console.log('Введите сообщение в консоль и нажмите Enter.')
-console.log('AIMember должен ответить вам.')
+console.log('InferenceMember должен ответить вам.')
 console.log('(Ctrl+C для выхода)\n')
 ````
 
@@ -454,42 +544,6 @@ export const LlmTool = {
 }
 ````
 
-## File: src/AIMember/events.js
-````javascript
-import { EventFactory, Types } from "@ellementul/uee-core"
-
-export const taskRequestEvent = EventFactory(Types.Object.Def({
-  system: "AI",
-  action: "TaskRequest",
-  taskId: Types.Key.Def(3),
-  sourceUid: Types.Key.Def(3),
-  content: Types.String.Def(),
-  systemPrompt: Types.String.Def(),
-  timestamp: Types.Key.Def(3),
-  role: Types.String.Def()
-}))
-
-// AI ответил
-export const aiResponseEvent = EventFactory(Types.Object.Def({
-  system: "AI",
-  action: "Response",
-  sourceUid: Types.Key.Def(3),
-  message: Types.String.Def(),
-  timestamp: Types.Key.Def(3)
-}))
-
-export const inferenceErrorEvent = EventFactory(Types.Object.Def({
-  system: "AI",
-  action: "InferenceError",
-  sourceUid: Types.Key.Def(3),
-  taskId: Types.Key.Def(3),       // Критически важно: связывает ошибку с конкретной задачей
-  error: Types.Object.Def({
-    message: Types.String.Def()   // Только сообщение, как мы и договаривались
-  }),
-  timestamp: Types.Key.Def(3)
-}))
-````
-
 ## File: src/ChatMember/events.js
 ````javascript
 import { EventFactory, Types } from "@ellementul/uee-core"
@@ -611,62 +665,6 @@ export class ChatMember extends MemberFactory {
   
   _prompt() {
     process.stdout.write('> ')
-  }
-}
-````
-
-## File: src/AIMember/index.js
-````javascript
-import { MemberFactory } from '@ellementul/uee-core'
-import { taskRequestEvent, aiResponseEvent, inferenceErrorEvent } from './events.js'
-
-export class AIMember extends MemberFactory {
-  constructor(name = "AIMember") {
-    super(name)
-    
-    this.apiUrl = 'http://localhost:1234/v1/chat/completions'
-    this.model = 'omnicoder-qwen3.5-9b-claude-4.6-opus-uncensored-v2'
-    
-    this.onJoinRoom = () => {
-      console.log(`[AIMember] Присоединился. UID: ${this.uid()}`)
-      this.subscribe(taskRequestEvent, this.handleTask.bind(this), false)
-    }
-  }
-  
-  async handleTask(msg) {
-    try {
-      const response = await fetch(this.apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: msg.systemPrompt },
-            { role: 'user', content: msg.content }
-          ]
-        })
-      })
-      
-      if (!response.ok) throw new Error(`HTTP ошибка: ${response.status}`)
-      
-      const data = await response.json()
-      const aiText = data.choices?.[0]?.message?.content || 'Извини, я не смог сгенерировать ответ.'
-      
-      this.send(aiResponseEvent, {
-        sourceUid: this.uid(),
-        message: aiText,
-        timestamp: Date.now().toString()
-      })
-    } catch (error) {
-      this.send(inferenceErrorEvent, {
-        sourceUid: this.uid(),
-        taskId: msg.taskId,
-        error: {
-          message: error.message
-        },
-        timestamp: Date.now().toString()
-      })
-    }
   }
 }
 ````
