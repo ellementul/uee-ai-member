@@ -7,6 +7,7 @@ export class ChatMember extends MemberFactory {
     super(name)
 
     this.systemPrompt = " "
+    this.mode = 'menu'
 
     this.onJoinRoom = () => {
       console.log(`[Канал] Присоединился к комнате. UID: ${this.uid()}`)
@@ -29,31 +30,41 @@ export class ChatMember extends MemberFactory {
     
     rl.on('line', (line) => {
       const input = line.trim()
-      if (!input) {
-        this._prompt()
+      
+      if (this.mode === 'menu') {
+        if (input === '1') {
+          this.mode = 'prompt'
+          this._prompt()
+        } else if (input !== '') {
+          console.log('\n[Канал] Неизвестная команда. Введите "1" для начала.')
+          this._prompt()
+        } else {
+          this._prompt()
+        }
         return
       }
       
-      if (input.startsWith('/task ')) {
-        const content = input.slice(6).trim()
-        if (content) {
+      if (this.mode === 'prompt') {
+        if (input) {
           const taskPayload = {
             taskId: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
             sourceUid: this.uid(),
             systemPrompt: this.systemPrompt,
-            content: content,
+            content: input,
             timestamp: Date.now().toString(),
             role: "User"
           }
+          
           this.send(taskRequestEvent, taskPayload)
+          console.log('\n[Канал] Задача отправлена в Инференс.')
         } else {
-          console.log('\n[Канал] Ошибка: укажите текст задачи. Пример: /task проанализируй данные')
+          console.log('\n[Канал] Ввод отменен.')
         }
-      } else {
-        console.log('\n[Канал] Неизвестная команда. Доступна только: /task <текст>')
+        
+        this.mode = 'menu'
+        this._prompt()
+        return
       }
-      
-      this._prompt()
     })
     
     rl.on('close', () => {
@@ -65,6 +76,10 @@ export class ChatMember extends MemberFactory {
   }
   
   _prompt() {
-    process.stdout.write('> ')
+    if (this.mode === 'menu') {
+      process.stdout.write('\n> [Меню] Введите "1" для ввода задачи: ')
+    } else {
+      process.stdout.write('\n> [Задача] Введите текст (Enter для отправки): ')
+    }
   }
 }
