@@ -7,11 +7,9 @@ export class HistoryMember extends MemberFactory {
     
     const logFileName = `history_log_${new Date().toISOString().replace(/[:.]/g, '-')}.log`
     this.logStream = fs.createWriteStream(logFileName, { flags: 'a' })
-    console.log(`[History] Логирование начато в файл: ${logFileName}`)
+    console.log(`\n[History] Логирование начато в файл: ${logFileName}`)
 
     this.onJoinRoom = () => {
-      console.log(`[History] Присоединился к комнате. UID: ${this.uid()}`)
-      
       // Подписка на все события без фильтрации
       const AllTypeEvent = EventFactory(Types.Object.Def({}, true))
       this.subscribe(AllTypeEvent, (msg) => {

@@ -1,5 +1,5 @@
 import { MemberFactory } from '@ellementul/uee-core'
-import { taskRequestEvent, inferenceResponseEvent, inferenceErrorEvent } from './events.js'
+import { taskRequestEvent, inferenceResponseEvent, inferenceErrorEvent, inferenceReadyEvent } from './events.js'
 import { LlmTool } from '../Tools/lmstudio/index.js'
 
 export class InferenceMember extends MemberFactory {
@@ -16,6 +16,10 @@ export class InferenceMember extends MemberFactory {
     
     this.onJoinRoom = () => {
       this.subscribe(taskRequestEvent, this.handleTask.bind(this), false)
+      this.send(inferenceReadyEvent, {
+        sourceUid: this.uid(),
+        timestamp: Date.now().toString()
+      })
     }
   }
   
@@ -46,9 +50,15 @@ export class InferenceMember extends MemberFactory {
         },
         timestamp: Date.now().toString()
       })
+    } finally {
+      // Сигнализируем о готовности после завершения (успех или ошибка)
+      this.send(inferenceReadyEvent, {
+        sourceUid: this.uid(),
+        timestamp: Date.now().toString()
+      })
     }
   }
-  
+
   _detectFormat(message) {
     try {
       JSON.parse(message)

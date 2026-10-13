@@ -1,5 +1,12 @@
 import { EventFactory, Types } from "@ellementul/uee-core"
 
+export const inferenceReadyEvent = EventFactory(Types.Object.Def({
+  system: "AI",
+  action: "InferenceReady",
+  sourceUid: Types.Key.Def(3),
+  timestamp: Types.Key.Def(3)
+}))
+
 export const taskRequestEvent = EventFactory(Types.Object.Def({
   system: "AI",
   action: "TaskRequest",

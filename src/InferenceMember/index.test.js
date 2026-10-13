@@ -2,7 +2,12 @@ import test from 'ava'
 import sinon from 'sinon'
 import { MemberFactory } from '@ellementul/uee-core'
 import { InferenceMember } from './index.js'
-import { taskRequestEvent, inferenceResponseEvent, inferenceErrorEvent } from './events.js'
+import { 
+  taskRequestEvent, 
+  inferenceResponseEvent, 
+  inferenceErrorEvent, 
+  inferenceReadyEvent 
+} from './events.js'
 
 // --- Утилиты ---
 
@@ -45,6 +50,27 @@ const createTaskPayload = (taskId, content = 'Привет') => ({
 
 // --- Тестовые кейсы ---
 
+test('InferenceMember: отправляет готовность при присоединении к комнате', async (t) => {
+  const host = new MemberFactory("HostRoom")
+  host.makeRoom()
+  host.strictValidationEvent = true
+
+  const readyCallback = sinon.fake()
+  host.subscribe(inferenceReadyEvent, readyCallback, false)
+
+  const mockTool = createMockLlmTool({ message: "test" })
+  const inference = new InferenceMember("Inference", { LlmTool: mockTool })
+  
+  // Событие должно уйти внутри onJoinRoom, который срабатывает при addMember
+  host.addMember(inference)
+
+  await waitFor(() => readyCallback.called)
+
+  t.true(readyCallback.calledOnce)
+  const payload = readyCallback.getCall(0).args[0]
+  t.is(payload.sourceUid, inference.uid())
+})
+
 test('InferenceMember: успешный текстовый ответ', async (t) => {
   const host = new MemberFactory("HostRoom")
   host.makeRoom()
@@ -58,18 +84,26 @@ test('InferenceMember: успешный текстовый ответ', async (t
   const inference = new InferenceMember("Inference", { LlmTool: mockTool })
   host.addMember(inference)
 
-  const callback = sinon.fake()
-  host.subscribe(inferenceResponseEvent, callback, false)
+  const responseCallback = sinon.fake()
+  const readyCallback = sinon.fake()
+  
+  host.subscribe(inferenceResponseEvent, responseCallback, false)
+  host.subscribe(inferenceReadyEvent, readyCallback, false)
 
   host.send(taskRequestEvent, createTaskPayload(taskId, 'Скажи привет'))
 
-  await waitFor(() => callback.called)
+  await waitFor(() => responseCallback.called && readyCallback.called)
 
-  t.true(callback.calledOnce)
-  const payload = callback.getCall(0).args[0]
-  t.is(payload.format, expectedFormat)
-  t.is(payload.message, expectedMessage)
-  t.is(payload.taskId, taskId)
+  t.true(responseCallback.calledOnce)
+  t.true(readyCallback.calledOnce)
+  
+  const responsePayload = responseCallback.getCall(0).args[0]
+  t.is(responsePayload.format, expectedFormat)
+  t.is(responsePayload.message, expectedMessage)
+  t.is(responsePayload.taskId, taskId)
+
+  const readyPayload = readyCallback.getCall(0).args[0]
+  t.is(readyPayload.sourceUid, inference.uid())
 })
 
 test('InferenceMember: успешный JSON ответ', async (t) => {
@@ -85,17 +119,22 @@ test('InferenceMember: успешный JSON ответ', async (t) => {
   const inference = new InferenceMember("Inference", { LlmTool: mockTool })
   host.addMember(inference)
 
-  const callback = sinon.fake()
-  host.subscribe(inferenceResponseEvent, callback, false)
+  const responseCallback = sinon.fake()
+  const readyCallback = sinon.fake()
+  
+  host.subscribe(inferenceResponseEvent, responseCallback, false)
+  host.subscribe(inferenceReadyEvent, readyCallback, false)
 
   host.send(taskRequestEvent, createTaskPayload(taskId, 'Дай JSON'))
 
-  await waitFor(() => callback.called)
+  await waitFor(() => responseCallback.called && readyCallback.called)
 
-  t.true(callback.calledOnce)
-  const payload = callback.getCall(0).args[0]
-  t.is(payload.format, expectedFormat)
-  t.is(payload.message, jsonString)
+  t.true(responseCallback.calledOnce)
+  t.true(readyCallback.calledOnce)
+  
+  const responsePayload = responseCallback.getCall(0).args[0]
+  t.is(responsePayload.format, expectedFormat)
+  t.is(responsePayload.message, jsonString)
 })
 
 test('InferenceMember: обработка ошибки LLM инструмента', async (t) => {
@@ -120,20 +159,25 @@ test('InferenceMember: обработка ошибки LLM инструмент�
   const inference = new InferenceMember("Inference", { LlmTool: mockTool })
   host.addMember(inference)
 
-  const callback = sinon.fake()
-  host.subscribe(inferenceErrorEvent, callback, false)
+  const errorCallback = sinon.fake()
+  const readyCallback = sinon.fake()
+  
+  host.subscribe(inferenceErrorEvent, errorCallback, false)
+  host.subscribe(inferenceReadyEvent, readyCallback, false)
 
   host.send(taskRequestEvent, createTaskPayload(taskId, 'Сломись'))
 
-  await waitFor(() => callback.called)
+  await waitFor(() => errorCallback.called && readyCallback.called)
 
-  t.true(callback.calledOnce)
-  const payload = callback.getCall(0).args[0]
-  t.is(payload.error.message, errorMessage)
-  t.is(payload.taskId, taskId)
+  t.true(errorCallback.calledOnce)
+  t.true(readyCallback.calledOnce)
+  
+  const errorPayload = errorCallback.getCall(0).args[0]
+  t.is(errorPayload.error.message, errorMessage)
+  t.is(errorPayload.taskId, taskId)
 })
 
-test('InferenceMember: тихий сброс при пустом ответе', async (t) => {
+test('InferenceMember: тихий сброс при пустом ответе и сигнал готовности', async (t) => {
   const host = new MemberFactory("HostRoom")
   host.makeRoom()
   host.strictValidationEvent = true
@@ -144,12 +188,17 @@ test('InferenceMember: тихий сброс при пустом ответе', 
   const inference = new InferenceMember("Inference", { LlmTool: mockTool })
   host.addMember(inference)
 
-  const callback = sinon.fake()
-  host.subscribe(inferenceResponseEvent, callback, false)
+  const responseCallback = sinon.fake()
+  const readyCallback = sinon.fake()
+  
+  host.subscribe(inferenceResponseEvent, responseCallback, false)
+  host.subscribe(inferenceReadyEvent, readyCallback, false)
 
   host.send(taskRequestEvent, createTaskPayload(taskId, 'Пустота'))
 
-  const error = await t.throwsAsync(() => waitFor(() => callback.called, 500))
-  t.true(error.message.includes('Timeout'))
-  t.false(callback.called)
+  // Теперь мы ждем НЕ таймаута, а успешного сигнала готовности
+  await waitFor(() => readyCallback.called)
+
+  t.true(readyCallback.calledOnce)
+  t.false(responseCallback.called, 'Событие ответа не должно быть отправлено')
 })

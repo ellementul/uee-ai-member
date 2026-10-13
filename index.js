@@ -2,6 +2,7 @@ import { MemberFactory } from '@ellementul/uee-core'
 import { InferenceMember } from './src/InferenceMember/index.js'
 import { ChatMember } from './src/ChatMember/index.js'
 import { HistoryMember } from './src/HistoryMember/index.js'
+import { AITaskManagerMember } from './src/AITaskManagerMember/index.js'
 
 
 console.log('--- Инициализация системы ---')
@@ -10,14 +11,17 @@ const host = new MemberFactory("HostRoom")
 host.makeRoom()
 console.log(`[Host] Комната создана. UID: ${host.uid()}`)
 
-const userChat = new ChatMember("UserChat")
+const userChat = new ChatMember("UI")
 console.log(`[UserChat] Запущен. UID: ${userChat.uid()}`)
 
-const aiChat = new InferenceMember("InferenceMember")
+const aiChat = new InferenceMember("Inference")
 console.log(`[InferenceMember] Запущен. UID: ${aiChat.uid()}`)
 
-const history = new HistoryMember("HistoryMember") // <-- Создание
+const history = new HistoryMember("History")
 console.log(`[HistoryMember] Запущен. UID: ${history.uid()}`)
+
+const admin = new AITaskManagerMember("AIAdmin")
+console.log(`[AITaskManagerMember] Запущен. UID: ${admin.uid()}`)
 
 // 4. ПОМЕЩАЕМ ОБОИХ В ОДНУ ОБЩУЮ КОМНАТУ
 // Это автоматически настроит всплытие событий (bubbling) между ними
@@ -25,10 +29,12 @@ console.log(`[HistoryMember] Запущен. UID: ${history.uid()}`)
 aiChat.strictValidationEvent = true
 userChat.strictValidationEvent = true
 history.strictValidationEvent = true
+admin.strictValidationEvent = true
 
 host.addMember(aiChat)
 host.addMember(userChat)
 host.addMember(history)
+host.addMember(admin)
 
 
 console.log('\n=== Система готова к работе ===')
