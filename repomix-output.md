@@ -33,32 +33,16 @@ The content is organized as follows:
 - Files are sorted by Git change count (files with more changes are at the bottom)
 
 # Directory Structure
-````
-src/
-  ChatMember/
-    events.js
-    index.js
-  InferenceMember/
-    events.js
-    index.js
-  Tools/
-    eventQueue/
-      index.js
-    llm/
-      index.js
-    lmstudio/
-      index.js
-.gitignore
+```
+events.js
 index.js
-LICENSE
-package.json
-README.md
-````
+index.test.js
+```
 
 # Files
 
-## File: src/InferenceMember/events.js
-````javascript
+## File: events.js
+```javascript
 import { EventFactory, Types } from "@ellementul/uee-core"
 
 export const taskRequestEvent = EventFactory(Types.Object.Def({
@@ -78,6 +62,16 @@ export const aiResponseEvent = EventFactory(Types.Object.Def({
   action: "Response",
   sourceUid: Types.Key.Def(3),
   message: Types.String.Def(),
+  timestamp: Types.Key.Def(3)
+}))
+
+export const inferenceResponseEvent = EventFactory(Types.Object.Def({
+  system: "AI",
+  action: "InferenceResponse",
+  sourceUid: Types.Key.Def(3),
+  taskId: Types.Key.Def(3),
+  message: Types.String.Def(),
+  format: Types.String.Def(), // "json" или "text"
   timestamp: Types.Key.Def(3)
 }))
 
@@ -91,20 +85,165 @@ export const inferenceErrorEvent = EventFactory(Types.Object.Def({
   }),
   timestamp: Types.Key.Def(3)
 }))
-````
+```
 
-## File: src/InferenceMember/index.js
-````javascript
+## File: index.test.js
+```javascript
+import test from 'ava'
+import sinon from 'sinon'
 import { MemberFactory } from '@ellementul/uee-core'
-import { taskRequestEvent, aiResponseEvent, inferenceErrorEvent } from './events.js'
+import { InferenceMember } from './index.js'
+import { taskRequestEvent, inferenceResponseEvent, inferenceErrorEvent } from './events.js'
+
+// --- Утилиты ---
+
+// Надёжное ожидание условия с таймаутом (вместо later)
+const waitFor = (condition, timeoutMs = 2000) => {
+  return new Promise((resolve, reject) => {
+    const start = Date.now()
+    const interval = setInterval(() => {
+      if (condition()) {
+        clearInterval(interval)
+        resolve()
+      } else if (Date.now() - start > timeoutMs) {
+        clearInterval(interval)
+        reject(new Error(`Timeout waiting for condition after ${timeoutMs}ms`))
+      }
+    }, 10)
+  })
+}
+
+// Фабрика мок-инструмента LLM
+const createMockLlmTool = (mockResponse) => ({
+  name: "Llm",
+  ToolFactory() {
+    return {
+      setConfig: () => {},
+      query: async () => mockResponse
+    }
+  },
+  depends: { required: [] }
+})
+
+// Хелпер для payload задачи
+const createTaskPayload = (taskId = 'test-task-1', content = 'Привет') => ({
+  taskId,
+  sourceUid: 'user-uid-123',
+  systemPrompt: 'Ты полезный помощник',
+  content,
+  timestamp: Date.now().toString(),
+  role: 'User'
+})
+
+// --- Тестовые кейсы ---
+
+test('InferenceMember: успешный текстовый ответ', async (t) => {
+  const host = new MemberFactory("HostRoom")
+  host.makeRoom()
+
+  const mockTool = createMockLlmTool({ message: "Это обычный текст" })
+  const inference = new InferenceMember("Inference", { LlmTool: mockTool })
+  host.addMember(inference)
+
+  const callback = sinon.fake()
+  host.subscribe(inferenceResponseEvent, callback, false)
+
+  host.send(taskRequestEvent, createTaskPayload('task-text-1', 'Скажи привет'))
+
+  await waitFor(() => callback.called)
+
+  t.true(callback.calledOnce)
+  const payload = callback.getCall(0).args[0]
+  t.is(payload.format, 'text')
+  t.is(payload.message, 'Это обычный текст')
+  t.is(payload.taskId, 'task-text-1')
+})
+
+test('InferenceMember: успешный JSON ответ', async (t) => {
+  const host = new MemberFactory("HostRoom")
+  host.makeRoom()
+
+  const jsonString = '{"role": "admin", "prompt": "будь строгим"}'
+  const mockTool = createMockLlmTool({ message: jsonString })
+  const inference = new InferenceMember("Inference", { LlmTool: mockTool })
+  host.addMember(inference)
+
+  const callback = sinon.fake()
+  host.subscribe(inferenceResponseEvent, callback, false)
+
+  host.send(taskRequestEvent, createTaskPayload('task-json-1', 'Дай JSON'))
+
+  await waitFor(() => callback.called)
+
+  t.true(callback.calledOnce)
+  const payload = callback.getCall(0).args[0]
+  t.is(payload.format, 'json')
+  t.is(payload.message, jsonString)
+})
+
+test('InferenceMember: обработка ошибки LLM инструмента', async (t) => {
+  const host = new MemberFactory("HostRoom")
+  host.makeRoom()
+
+  const mockTool = {
+    name: "Llm",
+    ToolFactory() {
+      return {
+        setConfig: () => {},
+        query: async () => { throw new Error("Сбой сети API") }
+      }
+    },
+    depends: { required: [] }
+  }
+
+  const inference = new InferenceMember("Inference", { LlmTool: mockTool })
+  host.addMember(inference)
+
+  const callback = sinon.fake()
+  host.subscribe(inferenceErrorEvent, callback, false)
+
+  host.send(taskRequestEvent, createTaskPayload('task-err-1', 'Сломись'))
+
+  await waitFor(() => callback.called)
+
+  t.true(callback.calledOnce)
+  const payload = callback.getCall(0).args[0]
+  t.is(payload.error.message, 'Сбой сети API')
+  t.is(payload.taskId, 'task-err-1')
+})
+
+test('InferenceMember: тихий сброс при пустом ответе', async (t) => {
+  const host = new MemberFactory("HostRoom")
+  host.makeRoom()
+
+  const mockTool = createMockLlmTool({ message: "" })
+  const inference = new InferenceMember("Inference", { LlmTool: mockTool })
+  host.addMember(inference)
+
+  const callback = sinon.fake()
+  host.subscribe(inferenceResponseEvent, callback, false)
+
+  host.send(taskRequestEvent, createTaskPayload('task-empty-1', 'Пустота'))
+
+  // Ожидаем, что условие НИКОГДА не выполнится (таймаут)
+  const error = await t.throwsAsync(() => waitFor(() => callback.called, 500))
+  t.true(error.message.includes('Timeout'))
+  t.false(callback.called)
+})
+```
+
+## File: index.js
+```javascript
+import { MemberFactory } from '@ellementul/uee-core'
+import { taskRequestEvent, inferenceResponseEvent, inferenceErrorEvent } from './events.js'
 import { LlmTool } from '../Tools/lmstudio/index.js'
 
-export class InferenceMember extends MemberFactory { // <-- Переименован класс
-  constructor(name = "InferenceMember") {
+export class InferenceMember extends MemberFactory {
+   constructor(name = "InferenceMember", options = {}) {
     super(name)
     
-    // 1. Подключаем только инструмент LLM
-    this.addTool(LlmTool)
+    const { LlmTool: customLlmTool } = options
+    this.addTool(customLlmTool || LlmTool)
     
     this.tools.Llm.setConfig({
       apiUrl: 'http://localhost:1234/v1/chat/completions',
@@ -118,22 +257,23 @@ export class InferenceMember extends MemberFactory { // <-- Переименов
   
   async handleTask(msg) {
     try {
-      // 2. Используем абстракцию инструмента
       const result = await this.tools.Llm.query([
         { role: 'system', content: msg.systemPrompt },
         { role: 'user', content: msg.content }
       ])
       
-      // 3. Генерируем событие ответа (без console.log)
       if (result && result.message) {
-        this.send(aiResponseEvent, {
+        const format = this._detectFormat(result.message)
+        
+        this.send(inferenceResponseEvent, {
           sourceUid: this.uid(),
+          taskId: msg.taskId,
           message: result.message,
+          format: format,
           timestamp: Date.now().toString()
         })
       }
     } catch (error) {
-      // 4. Генерируем событие ошибки (без console.error)
       this.send(inferenceErrorEvent, {
         sourceUid: this.uid(),
         taskId: msg.taskId,
@@ -144,527 +284,14 @@ export class InferenceMember extends MemberFactory { // <-- Переименов
       })
     }
   }
-}
-````
-
-## File: src/Tools/eventQueue/index.js
-````javascript
-export const EventQueueTool = {
-  name: "EventQueue",
-  ToolFactory() {
-    const queue = []
-
-    return {
-      // Метод для добавления события в очередь (передается в subscribe)
-      enqueue(msg) {
-        queue.push(msg)
-      },
-      // Метод для извлечения одного события из очереди для обработки
-      dequeue() {
-        return queue.shift()
-      },
-      // Вспомогательный метод для проверки, есть ли еще события
-      isEmpty() {
-        return queue.length === 0
-      }
-    }
-  },
-  depends: {
-    required: []
-  }
-}
-````
-
-## File: src/Tools/lmstudio/index.js
-````javascript
-export const LlmTool = {
-  name: "Llm",
-  ToolFactory({ currentMember }) {
-    let apiUrl = 'http://localhost:1234/api/v1/chat'
-    let model = 'local-model'
-
-    return {
-      setConfig(config) {
-        if (config.apiUrl) apiUrl = config.apiUrl
-        if (config.model) model = config.model
-      },
-      async query(messages) {
-        try {
-          const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model,
-              messages,
-              store: false // Отключаем хранение истории чата на стороне сервера
-            })
-          })
-
-          if (!response.ok) {
-            const errorText = await response.text()
-            throw new Error(`HTTP ошибка: ${response.status}. Детали: ${errorText}`)
-          }
-
-          const data = await response.json()
-          let message = ""
-          let reason = ""
-
-          // 1. Нативный формат LM Studio (массив output)
-          if (data.output && Array.isArray(data.output)) {
-            for (const item of data.output) {
-              if (item.type === 'text') message += item.content
-              if (item.type === 'reasoning') reason += item.content
-            }
-          } 
-          // 2. Фолбэк на OpenAI-совместимый формат (если сервер вернет его)
-          else if (data.choices?.[0]?.message) {
-            message = data.choices[0].message.content || ""
-            reason = data.choices[0].message.reasoning_content || ""
-          }
-
-          return {
-            message: message.trim(),
-            reason: reason.trim()
-          }
-        } catch (error) {
-          currentMember.throwError(error)
-          return null
-        }
-      }
-    }
-  },
-  depends: {
-    required: [{ requiredName: "currentMember", requiredMethods: ["throwError"] }]
-  }
-}
-````
-
-## File: .gitignore
-````
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-
-# Diagnostic reports (https://nodejs.org/api/report.html)
-report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
-
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Directory for instrumented libs generated by jscoverage/JSCover
-lib-cov
-
-# Coverage directory used by tools like istanbul
-coverage
-*.lcov
-
-# nyc test coverage
-.nyc_output
-
-# Grunt intermediate storage (https://gruntjs.com/creating-plugins#storing-task-files)
-.grunt
-
-# Bower dependency directory (https://bower.io/)
-bower_components
-
-# node-waf configuration
-.lock-wscript
-
-# Compiled binary addons (https://nodejs.org/api/addons.html)
-build/Release
-
-# Dependency directories
-node_modules/
-jspm_packages/
-
-# Snowpack dependency directory (https://snowpack.dev/)
-web_modules/
-
-# TypeScript cache
-*.tsbuildinfo
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Optional stylelint cache
-.stylelintcache
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# dotenv environment variable files
-.env
-.env.*
-!.env.example
-
-# parcel-bundler cache (https://parceljs.org/)
-.cache
-.parcel-cache
-
-# Next.js build output
-.next
-out
-
-# Nuxt.js build / generate output
-.nuxt
-dist
-.output
-
-# Gatsby files
-.cache/
-# Comment in the public line in if your project uses Gatsby and not Next.js
-# https://nextjs.org/blog/next-9-1#public-directory-support
-# public
-
-# vuepress build output
-.vuepress/dist
-
-# vuepress v2.x temp directory
-.temp
-
-# Sveltekit cache directory
-.svelte-kit/
-
-# vitepress build output
-**/.vitepress/dist
-
-# vitepress cache directory
-**/.vitepress/cache
-
-# Docusaurus cache and generated files
-.docusaurus
-
-# Serverless directories
-.serverless/
-
-# FuseBox cache
-.fusebox/
-
-# DynamoDB Local files
-.dynamodb/
-
-# Firebase cache directory
-.firebase/
-
-# TernJS port file
-.tern-port
-
-# Stores VSCode versions used for testing VSCode extensions
-.vscode-test
-
-# pnpm
-.pnpm-store
-
-# yarn v3
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/sdks
-!.yarn/versions
-
-# Vite files
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
-.vite/
-````
-
-## File: index.js
-````javascript
-import { MemberFactory } from '@ellementul/uee-core'
-import { InferenceMember } from './src/InferenceMember/index.js'
-import { ChatMember } from './src/ChatMember/index.js'
-
-console.log('--- Инициализация системы ---')
-
-// 1. Создаем "Хост" — это будет наша общая комната (Room)
-const host = new MemberFactory("HostRoom")
-host.makeRoom()
-console.log(`[Host] Комната создана. UID: ${host.uid()}`)
-
-// 2. Создаем Пользовательский чат (читает stdin, пишет в stdout)
-const userChat = new ChatMember("UserChat")
-console.log(`[UserChat] Запущен. UID: ${userChat.uid()}`)
-
-// 3. Создаем AI (пока работает как эхо-бот)
-const aiChat = new InferenceMember("InferenceMember")
-console.log(`[InferenceMember] Запучен. UID: ${aiChat.uid()}`)
-
-// 4. ПОМЕЩАЕМ ОБОИХ В ОДНУ ОБЩУЮ КОМНАТУ
-// Это автоматически настроит всплытие событий (bubbling) между ними
-
-aiChat.strictValidationEvent = true
-userChat.strictValidationEvent = true
-
-host.addMember(aiChat)
-host.addMember(userChat)
-
-
-console.log('\n=== Система готова к работе ===')
-console.log('Введите сообщение в консоль и нажмите Enter.')
-console.log('InferenceMember должен ответить вам.')
-console.log('(Ctrl+C для выхода)\n')
-````
-
-## File: LICENSE
-````
-MIT License
-
-Copyright (c) 2026 Иван
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-````
-
-## File: package.json
-````json
-{
-  "name": "uee-ai-member",
-  "version": "0.0.1",
-  "description": "An event-driven AI integration module for UnyEvents Core, enabling seamless interaction with LLMs via OpenAI-compatible APIs.",
-  "homepage": "https://github.com/ellementul/uee-ai-member#readme",
-  "bugs": {
-    "url": "https://github.com/ellementul/uee-ai-member/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ellementul/uee-ai-member.git"
-  },
-  "dependencies": {
-    "@ellementul/uee-core": "file:../uee-core"
-  },
-  "license": "MIT",
-  "author": "ellementul",
-  "type": "module",
-  "main": "index.js",
-  "scripts": {
-    "test": "ava",
-    "start": "node ./index.js"
-  }
-}
-````
-
-## File: README.md
-````markdown
-# uee-ai
-An event-driven AI integration module for UnyEvents Core, enabling seamless interaction with LLMs via OpenAI-compatible APIs
-````
-
-## File: src/Tools/llm/index.js
-````javascript
-export const LlmTool = {
-    name: "Llm",
-    ToolFactory({ currentMember }) {
-        let apiUrl = 'http://localhost:1234/v1/chat/completions'
-        let model = 'omnicoder-qwen3.5-9b-claude-4.6-opus-uncensored-v2'
-
-        return {
-            setConfig(config) {
-                if (config.apiUrl) apiUrl = config.apiUrl
-                if (config.model) model = config.model
-            },
-            async query(messages) {
-                try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        model, 
-                        messages
-                        // Убран response_format, так как он вызывает 400 на неподдерживаемых моделях
-                    })
-                })
-                
-                if (!response.ok) {
-                    const errorText = await response.text()
-                    throw new Error(`HTTP ошибка: ${response.status}. Детали API: ${errorText}`)
-                }
-                
-                const data = await response.json()
-                let rawContent = data.choices?.[0]?.message?.content || '{}'
-                
-                // Надежное извлечение: берем всё от первой '{' до последней '}'
-                const firstBracket = rawContent.indexOf('{')
-                const lastBracket = rawContent.lastIndexOf('}')
-                
-                if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-                    rawContent = rawContent.slice(firstBracket, lastBracket + 1)
-                } else {
-                    rawContent = rawContent.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim()
-                }
-                
-                try {
-                    return JSON.parse(rawContent)
-                } catch (parseError) {
-                    currentMember.throwError(new Error(`Failed to parse LLM JSON: ${parseError.message}. Raw: ${rawContent}`))
-                    return { reasoning: "Ошибка парсинга", shouldRespond: false, message: "" }
-                }
-                } catch (error) {
-                currentMember.throwError(error)
-                return null
-                }
-            }
-        }
-    },
-    depends: {
-        required: [{ requiredName: "currentMember", requiredMethods: ["throwError"] }]
-    }
-}
-````
-
-## File: src/ChatMember/events.js
-````javascript
-import { EventFactory, Types } from "@ellementul/uee-core"
-
-export const taskRequestEvent = EventFactory(Types.Object.Def({
-  system: "AI",
-  action: "TaskRequest",
-  taskId: Types.Key.Def(3),
-  sourceUid: Types.Key.Def(3),
-  content: Types.String.Def(),
-  systemPrompt: Types.String.Def(),
-  timestamp: Types.Key.Def(3),
-  role: Types.String.Def()
-}))
-
-// AI ответил
-export const aiResponseEvent = EventFactory(Types.Object.Def({
-  system: "AI",
-  action: "Response",
-  sourceUid: Types.Key.Def(3),
-  message: Types.String.Def(),
-  timestamp: Types.Key.Def(3)
-}))
-````
-
-## File: src/ChatMember/index.js
-````javascript
-import readline from 'readline'
-import fs from 'fs'
-import { aiResponseEvent, taskRequestEvent } from './events.js' // Убедись, что taskRequestEvent экспортирован здесь
-import { EventFactory, MemberFactory, Types } from '@ellementul/uee-core'
-
-export class ChatMember extends MemberFactory {
-  constructor(name = "ChatMember") {
-    super(name)
-
-    this.systemPrompt = " "
-    
-    // Уникальное имя файла для каждого запуска
-    const logFileName = `chat_log_${new Date().toISOString().replace(/[:.]/g, '-')}.log`
-    this.logStream = fs.createWriteStream(logFileName, { flags: 'a' })
-    console.log(`[Канал] Логирование начато в файл: ${logFileName}`)
-
-    this.onJoinRoom = () => {
-      console.log(`[Канал] Присоединился к комнате. UID: ${this.uid()}`)
-      
-      const AllTypeEvent = EventFactory(Types.Object.Def({}, true))
-
-      this.subscribe(AllTypeEvent, (msg) => {
-        this._logEvent('ALL', 'RECEIVE', msg)
-      })
-      
-      this.subscribe(aiResponseEvent, (msg) => {
-        this._logEvent('ANSWER AI', 'RECEIVE', msg, true)
-        this._prompt()
-      }, false)
-      
-      this._startInput()
-    }
-  }
-
-  _logEvent(direction, eventName, payload, isConsole = false) {
-    const timestamp = new Date().toISOString()
-    const logLine = `\n[${timestamp}] [${direction}] ${eventName}\n${JSON.stringify(payload, null, 2)}\n`
-    
-    // Вывод в консоль
-    if(isConsole)
-      console.log(logLine.trim())
-    // Запись в файл
-    this.logStream.write(logLine)
-  }
   
-  _startInput() {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      prompt: '> '
-    })
-    
-    rl.on('line', (line) => {
-      const input = line.trim()
-      if (!input) {
-        this._prompt()
-        return
-      }
-      
-      // Обработка единственной команды
-      if (input.startsWith('/task ')) {
-        const content = input.slice(6).trim()
-        if (content) {
-          const taskPayload = {
-            taskId: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-            sourceUid: this.uid(),
-            systemPrompt: this.systemPrompt,
-            content: content,
-            timestamp: Date.now().toString(),
-            role: "User"
-          }
-          
-          this.send(taskRequestEvent, taskPayload)
-        } else {
-          console.log('\n[Канал] Ошибка: укажите текст задачи. Пример: /task проанализируй данные')
-        }
-      } else {
-        console.log('\n[Канал] Неизвестная команда. Доступна только: /task <текст>')
-      }
-      
-      this._prompt()
-    })
-    
-    rl.on('close', () => {
-      console.log('\n[Канал] Закрыт.')
-      this.logStream.end()
-      process.exit(0)
-    })
-    
-    this._prompt()
-  }
-  
-  _prompt() {
-    process.stdout.write('> ')
+  _detectFormat(message) {
+    try {
+      JSON.parse(message)
+      return "json"
+    } catch {
+      return "text"
+    }
   }
 }
-````
+```

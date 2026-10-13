@@ -1,13 +1,13 @@
 import { MemberFactory } from '@ellementul/uee-core'
-import { taskRequestEvent, aiResponseEvent, inferenceErrorEvent } from './events.js'
+import { taskRequestEvent, inferenceResponseEvent, inferenceErrorEvent } from './events.js'
 import { LlmTool } from '../Tools/lmstudio/index.js'
 
-export class InferenceMember extends MemberFactory { // <-- Переименован класс
-  constructor(name = "InferenceMember") {
+export class InferenceMember extends MemberFactory {
+   constructor(name = "InferenceMember", options = {}) {
     super(name)
     
-    // 1. Подключаем только инструмент LLM
-    this.addTool(LlmTool)
+    const { LlmTool: customLlmTool } = options
+    this.addTool(customLlmTool || LlmTool)
     
     this.tools.Llm.setConfig({
       apiUrl: 'http://localhost:1234/v1/chat/completions',
@@ -21,22 +21,23 @@ export class InferenceMember extends MemberFactory { // <-- Переименов
   
   async handleTask(msg) {
     try {
-      // 2. Используем абстракцию инструмента
       const result = await this.tools.Llm.query([
         { role: 'system', content: msg.systemPrompt },
         { role: 'user', content: msg.content }
       ])
       
-      // 3. Генерируем событие ответа (без console.log)
       if (result && result.message) {
-        this.send(aiResponseEvent, {
+        const format = this._detectFormat(result.message)
+        
+        this.send(inferenceResponseEvent, {
           sourceUid: this.uid(),
+          taskId: msg.taskId,
           message: result.message,
+          format: format,
           timestamp: Date.now().toString()
         })
       }
     } catch (error) {
-      // 4. Генерируем событие ошибки (без console.error)
       this.send(inferenceErrorEvent, {
         sourceUid: this.uid(),
         taskId: msg.taskId,
@@ -45,6 +46,15 @@ export class InferenceMember extends MemberFactory { // <-- Переименов
         },
         timestamp: Date.now().toString()
       })
+    }
+  }
+  
+  _detectFormat(message) {
+    try {
+      JSON.parse(message)
+      return "json"
+    } catch {
+      return "text"
     }
   }
 }

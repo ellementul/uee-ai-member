@@ -20,5 +20,9 @@
   "scripts": {
     "test": "ava",
     "start": "node ./index.js"
+  },
+  "devDependencies": {
+    "ava": "^8.0.1",
+    "sinon": "^22.1.0"
   }
 }

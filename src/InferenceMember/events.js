@@ -20,6 +20,16 @@ export const aiResponseEvent = EventFactory(Types.Object.Def({
   timestamp: Types.Key.Def(3)
 }))
 
+export const inferenceResponseEvent = EventFactory(Types.Object.Def({
+  system: "AI",
+  action: "InferenceResponse",
+  sourceUid: Types.Key.Def(3),
+  taskId: Types.Key.Def(3),
+  message: Types.String.Def(),
+  format: Types.String.Def(), // "json" или "text"
+  timestamp: Types.Key.Def(3)
+}))
+
 export const inferenceErrorEvent = EventFactory(Types.Object.Def({
   system: "AI",
   action: "InferenceError",
