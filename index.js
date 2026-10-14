@@ -1,4 +1,4 @@
-import { MemberFactory } from '@ellementul/uee-core'
+import { MemberFactory, RelationTool } from '@ellementul/uee-core'
 import { InferenceMember } from './src/InferenceMember/index.js'
 import { ChatMember } from './src/ChatMember/index.js'
 import { HistoryMember } from './src/HistoryMember/index.js'
@@ -9,6 +9,8 @@ console.log('--- Инициализация системы ---')
 
 const host = new MemberFactory("HostRoom")
 host.makeRoom()
+RelationTool.pingDelay = 1000
+host.addTool(RelationTool)
 console.log(`[Host] Комната создана. UID: ${host.uid()}`)
 
 const userChat = new ChatMember("UI")

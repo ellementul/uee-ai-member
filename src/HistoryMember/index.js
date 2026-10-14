@@ -13,7 +13,9 @@ export class HistoryMember extends MemberFactory {
       // Подписка на все события без фильтрации
       const AllTypeEvent = EventFactory(Types.Object.Def({}, true))
       this.subscribe(AllTypeEvent, (msg) => {
-        this._logEvent('ALL', msg)
+
+        if(msg.action != "Ping" && msg.action != "Pong")
+          this._logEvent('ALL', msg)
       })
     }
   }

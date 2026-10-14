@@ -1,9 +1,9 @@
 import { MemberFactory } from '@ellementul/uee-core'
-import { taskRequestEvent, inferenceResponseEvent, inferenceErrorEvent, inferenceReadyEvent } from './events.js'
+import { taskRequestEvent, inferenceResponseEvent, inferenceErrorEvent, inferenceReadyEvent, pingEvent, inferencePongEvent } from './events.js'
 import { LlmTool } from '../Tools/lmstudio/index.js'
 
 export class InferenceMember extends MemberFactory {
-   constructor(name = "InferenceMember", options = {}) {
+  constructor(name = "InferenceMember", options = {}) {
     super(name)
     
     const { LlmTool: customLlmTool } = options
@@ -11,11 +11,16 @@ export class InferenceMember extends MemberFactory {
     
     this.tools.Llm.setConfig({
       apiUrl: 'http://localhost:1234/v1/chat/completions',
-      model: 'omnicoder-qwen3.5-9b-claude-4.6-opus-uncensored-v2'
+      model: 'qwen3.5-9b-uncensored-hauhaucs-aggressive'
     })
-    
+
+
+    this.isBusy = false
+
     this.onJoinRoom = () => {
       this.subscribe(taskRequestEvent, this.handleTask.bind(this), false)
+      this.subscribe(pingEvent, this.pong.bind(this), false)
+
       this.send(inferenceReadyEvent, {
         sourceUid: this.uid(),
         timestamp: Date.now().toString()
@@ -24,6 +29,11 @@ export class InferenceMember extends MemberFactory {
   }
   
   async handleTask(msg) {
+
+    if(this.isBusy)
+      return
+
+    this.isBusy = true
     try {
       const result = await this.tools.Llm.query([
         { role: 'system', content: msg.systemPrompt },
@@ -56,7 +66,16 @@ export class InferenceMember extends MemberFactory {
         sourceUid: this.uid(),
         timestamp: Date.now().toString()
       })
+      this.isBusy = false
     }
+  }
+
+  pong() {
+    this.send(inferencePongEvent, {
+        state: this.isBusy ? "Busy" : "Ready",
+        sourceUid: this.uid(),
+        timestamp: Date.now().toString()
+    })
   }
 
   _detectFormat(message) {
